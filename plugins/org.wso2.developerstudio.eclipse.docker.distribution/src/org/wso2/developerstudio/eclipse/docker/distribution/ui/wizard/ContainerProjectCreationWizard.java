@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.maven.model.Dependency;
@@ -100,6 +101,7 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
     
     private static final String MI_SECURITY_DIR = getMicroIntegratorPath() + File.separator + "repository"
             + File.separator + "resources" + File.separator + "security";
+    private static final String CONFIG_MAPPER_NAME_FOR_ENV = "env-data";
 
     public ContainerProjectCreationWizard() {
         this.dockerModel = new DockerModel();
@@ -198,18 +200,18 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
      *             An error occurred while writing the file
      */
     private void copyKubeYamlFile() throws IOException {
-        IFile kubeFile = project.getFile(DockerProjectConstants.KUBE_YAML_FILE_NAME);
-        File newFile = new File(kubeFile.getLocationURI().getPath());
+    	IFolder descriptorFolder = ProjectUtils.getWorkspaceFolder(project, project.getName());
+        File newFile = new File(descriptorFolder.getRawLocation().toOSString() + File.separator + 
+                                DockerProjectConstants.KUBE_YAML_FILE_NAME);
         if (!newFile.exists()) {
             // Creating the new yml file
             YAMLFactory yamlFactory = new YAMLFactory();
-            File file = kubeFile.getLocation().toFile();
             String imagePath = dockerModel.getKubeTargetRepository() + ":" + dockerModel.getKubeTargetTag();
-            try (FileWriter fw = new FileWriter(file);) {
+            try (FileWriter fw = new FileWriter(newFile);) {
                 YAMLGenerator yamlGenerator = yamlFactory.createGenerator(fw);
                 yamlGenerator.writeStartObject();
 
-                yamlGenerator.writeObjectField("apiVersion", "integration.wso2.com/v1alpha1");
+                yamlGenerator.writeObjectField("apiVersion", "wso2.com/v1alpha1");
                 yamlGenerator.writeObjectField("kind", "Integration");
                 yamlGenerator.writeFieldName("metadata");
                 yamlGenerator.writeStartObject();
@@ -233,23 +235,61 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
                     yamlGenerator.writeEndArray();
                 }
 
-                // check whether there are ENV variables given by user and append to the yaml
-                // file
+                // check whether there are ENV variables given by user and create a new data yaml
                 if (dockerModel.getKubernetesEnvParameters().size() > 0) {
-                    yamlGenerator.writeFieldName("env");
+                	copyKubeDataYamlFile(dockerModel.getKubernetesEnvParameters().entrySet());
+                	
+                    //create config mapper reference for env data
+                    yamlGenerator.writeFieldName("envFrom");
                     yamlGenerator.writeStartArray();
-
-                    for (Map.Entry<String, String> envMap : dockerModel.getKubernetesEnvParameters().entrySet()) {
-                        yamlGenerator.writeStartObject();
-                        yamlGenerator.writeObjectField("name", envMap.getKey());
-                        yamlGenerator.writeObjectField("value", envMap.getValue());
-                        yamlGenerator.writeEndObject();
-                    }
-
+                    yamlGenerator.writeStartObject();
+                    yamlGenerator.writeFieldName("configMapRef");
+                    yamlGenerator.writeStartObject();
+                    yamlGenerator.writeObjectField("name", "env-data");
+                    yamlGenerator.writeEndObject();
+                    yamlGenerator.writeEndObject();
                     yamlGenerator.writeEndArray();
                 }
 
                 yamlGenerator.writeEndObject();
+                yamlGenerator.writeEndObject();
+                yamlGenerator.flush();
+                yamlGenerator.close();
+            }
+        }
+    }
+    
+    /**
+     * Create new integration data yaml file for environment variables.
+     * 
+     * @throws IOException
+     *             An error occurred while writing the file
+     */
+    private void copyKubeDataYamlFile(Set<Map.Entry<String, String>> envMapEntries) throws IOException {
+    	IFolder descriptorFolder = ProjectUtils.getWorkspaceFolder(project, project.getName());
+    	File newFile = new File(descriptorFolder.getRawLocation().toOSString() + File.separator + 
+    	                        DockerProjectConstants.KUBE_DATA_YAML_FILE_NAME);
+        if (!newFile.exists()) {
+            // Creating the new yaml file
+            YAMLFactory yamlFactory = new YAMLFactory();
+            try (FileWriter fw = new FileWriter(newFile);) {
+                YAMLGenerator yamlGenerator = yamlFactory.createGenerator(fw);
+                yamlGenerator.writeStartObject();
+
+                yamlGenerator.writeObjectField("apiVersion", "v1");
+                yamlGenerator.writeObjectField("kind", "ConfigMap");
+                yamlGenerator.writeFieldName("metadata");
+                yamlGenerator.writeStartObject();
+                yamlGenerator.writeObjectField("name", CONFIG_MAPPER_NAME_FOR_ENV);
+                yamlGenerator.writeEndObject();
+                
+                yamlGenerator.writeFieldName("data");
+                yamlGenerator.writeStartObject();
+                for (Map.Entry<String, String> envMap : envMapEntries) {
+                	yamlGenerator.writeObjectField(envMap.getKey(), envMap.getValue());
+                }
+                yamlGenerator.writeEndObject();
+
                 yamlGenerator.writeEndObject();
                 yamlGenerator.flush();
                 yamlGenerator.close();
@@ -264,14 +304,14 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
      *             An error occurred while writing the file
      */
     private void copyKubeDeploymentServiceYamlFile() throws IOException {
-        IFile kubeFile = project.getFile(DockerProjectConstants.KUBE_YAML_K8S_FILE_NAME);
-        File newFile = new File(kubeFile.getLocationURI().getPath());
+    	IFolder descriptorFolder = ProjectUtils.getWorkspaceFolder(project, project.getName());
+        File newFile = new File(descriptorFolder.getRawLocation().toOSString() + File.separator + 
+                 DockerProjectConstants.KUBE_YAML_K8S_FILE_NAME);
         if (!newFile.exists()) {
             // Creating the new yml file
             YAMLFactory yamlFactory = new YAMLFactory();
-            File file = kubeFile.getLocation().toFile();
             String imagePath = dockerModel.getKubeTargetRepository() + ":" + dockerModel.getKubeTargetTag();
-            try (FileWriter fw = new FileWriter(file);) {
+            try (FileWriter fw = new FileWriter(newFile);) {
                 // append deployment kind
                 YAMLGenerator yamlGenerator = yamlFactory.createGenerator(fw);
                 yamlGenerator.writeStartObject();
@@ -280,7 +320,7 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
                 yamlGenerator.writeObjectField("kind", "Deployment");
                 yamlGenerator.writeFieldName("metadata");
                 yamlGenerator.writeStartObject();
-                yamlGenerator.writeObjectField("name", dockerModel.getKubeContainerName() + "-deployment");
+                yamlGenerator.writeObjectField("name", dockerModel.getKubeContainerName().toLowerCase() + "-deployment");
                 yamlGenerator.writeEndObject();
                 yamlGenerator.writeFieldName("spec");
                 yamlGenerator.writeStartObject();
@@ -334,18 +374,19 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
                     yamlGenerator.writeEndArray();
                 }
 
-                // check whether there are ENV variables given by user and append to the yaml
+                // check whether there are ENV variables given by user and create a new data yaml
                 if (dockerModel.getKubernetesEnvParameters().size() > 0) {
-                    yamlGenerator.writeFieldName("env");
+                	copyKubeDataYamlFile(dockerModel.getKubernetesEnvParameters().entrySet());
+                	
+                	//create config mapper reference for env data
+                    yamlGenerator.writeFieldName("envFrom");
                     yamlGenerator.writeStartArray();
-
-                    for (Map.Entry<String, String> envMap : dockerModel.getKubernetesEnvParameters().entrySet()) {
-                        yamlGenerator.writeStartObject();
-                        yamlGenerator.writeObjectField("name", envMap.getKey());
-                        yamlGenerator.writeObjectField("value", envMap.getValue());
-                        yamlGenerator.writeEndObject();
-                    }
-
+                    yamlGenerator.writeStartObject();
+                    yamlGenerator.writeFieldName("configMapRef");
+                    yamlGenerator.writeStartObject();
+                    yamlGenerator.writeObjectField("name", CONFIG_MAPPER_NAME_FOR_ENV);
+                    yamlGenerator.writeEndObject();
+                    yamlGenerator.writeEndObject();
                     yamlGenerator.writeEndArray();
                 }
                 yamlGenerator.writeEndObject();
@@ -361,14 +402,14 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
             }
             
             // append service kind
-            try (FileWriter fw = new FileWriter(file, true)) {
+            try (FileWriter fw = new FileWriter(newFile, true)) {
                 YAMLGenerator yamlGenerator = yamlFactory.createGenerator(fw);
                 yamlGenerator.writeStartObject();
                 yamlGenerator.writeObjectField("apiVersion", "v1");
                 yamlGenerator.writeObjectField("kind", "Service");
                 yamlGenerator.writeFieldName("metadata");
                 yamlGenerator.writeStartObject();
-                yamlGenerator.writeObjectField("name", dockerModel.getKubeContainerName() + "-service");
+                yamlGenerator.writeObjectField("name", dockerModel.getKubeContainerName().toLowerCase() + "-service");
                 yamlGenerator.writeEndObject();
                 yamlGenerator.writeFieldName("spec");
                 yamlGenerator.writeStartObject();
@@ -377,19 +418,39 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
                 yamlGenerator.writeStartObject();
                 yamlGenerator.writeObjectField("app", "integration");
                 yamlGenerator.writeEndObject();
+                dockerModel.getKubernetesPortParameters().put("8290", "8290");
+                dockerModel.getKubernetesPortParameters().put("8253", "8253");
+                dockerModel.getKubernetesPortParameters().put("9201", "9201");
+                dockerModel.getKubernetesPortParameters().put("9164", "9164");
                 // check whether there are Inbound Ports given by user and append to the yaml
                 if (dockerModel.getKubernetesPortParameters().size() > 0) {
                     yamlGenerator.writeFieldName("ports");
                     yamlGenerator.writeStartArray();
-
-                    for (Map.Entry<String, String> envMap : dockerModel.getKubernetesPortParameters().entrySet()) {
+                    for (Map.Entry<String, String> portMap : dockerModel.getKubernetesPortParameters().entrySet()) {
                         yamlGenerator.writeStartObject();
-                        yamlGenerator.writeObjectField("port", Integer.parseInt(envMap.getKey()));
-                        yamlGenerator.writeObjectField("targetPort", Integer.parseInt(envMap.getKey()));
+                        int port = Integer.parseInt(portMap.getKey());
+                        if (port == 8290) {
+                        	yamlGenerator.writeObjectField("name", 
+                        	                             dockerModel.getKubeContainerName().toLowerCase() + "-pt-httpport");
+                        } else if (port == 8253) {
+                        	yamlGenerator.writeObjectField("name", 
+                        	                               dockerModel.getKubeContainerName().toLowerCase() + "-pt-httpsport");
+                        } else if (port == 9201) {
+                        	yamlGenerator.writeObjectField("name", 
+                        	                               dockerModel.getKubeContainerName().toLowerCase() + "-management-http-port");
+                        } else if (port == 9164) {
+                        	yamlGenerator.writeObjectField("name", 
+                        	                               dockerModel.getKubeContainerName().toLowerCase() + "-management-https-port");
+                        } else {
+                        	yamlGenerator.writeObjectField("name", 
+                        	                               dockerModel.getKubeContainerName().toLowerCase() + "-inboundport-" + port);
+                        }
+                        yamlGenerator.writeObjectField("port", port);
+                        yamlGenerator.writeObjectField("targetPort", port);
                         yamlGenerator.writeEndObject();
                     }
                     yamlGenerator.writeEndArray();
-                }
+                } 
                 yamlGenerator.writeEndObject();
                 yamlGenerator.writeEndObject();
                 yamlGenerator.flush();
@@ -436,6 +497,11 @@ public class ContainerProjectCreationWizard extends AbstractWSO2ProjectCreationW
             createFolder(DockerProjectConstants.LIBS_FOLDER);
             createFolder(DockerProjectConstants.RESOURCES_FOLDER);
             createFolder(DockerProjectConstants.CARBON_HOME_FOLDER);
+            // Create descriptor folder for Kubernetes exporter
+            if (dockerModel.isKubernetesExporterProjectChecked()) {
+                createFolder(project.getName());
+            }
+            
 
             // Copy docker file
             copyDockerFile();
